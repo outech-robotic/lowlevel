@@ -16,7 +16,7 @@
 // TIMER PWM
 #define CONST_PWM_PRESCALER  2
 #define CONST_PWM_AUTORELOAD 1000
-#define CONST_PWM_REPETITION 1
+#define CONST_PWM_REPETITION 2
 #define CONST_PWM_MAX        CONST_PWM_AUTORELOAD
 
 // ASSERVISSEMENT
@@ -86,6 +86,44 @@
 /**
  * Project Pin Mapping
  */
+
+// NUCLEO F042K6 PINS
+// // Left side
+#define D1 PA9
+#define D0 PA9
+#define D2 PA12
+#define D3 PB0
+#define D4 PB7
+#define D5 PB6
+#define D6 PB1
+#define D7 PF0
+#define D8 PF1
+#define D9 PA8
+#define D10 PA11
+#define D11 PB5
+#define D12 PB4
+// // right side
+#define A7 PA2
+#define A6 PA7
+#define A5 PA6
+#define A4 PA5
+#define A3 PA4
+#define A2 PA3
+#define A1 PA1
+#define A0 PA0
+#define D13 PB3
+// // ADC channel pins: !! A0 ... A7 pins are not all ADC compatible (unlike Arduino), and some D0.. pins are ADC compatible
+#define PIN_ADC_0 A0
+#define PIN_ADC_1 A1
+#define PIN_ADC_3 A2
+#define PIN_ADC_4 A3
+#define PIN_ADC_5 A4
+#define PIN_ADC_6 A5
+#define PIN_ADC_7 A6
+#define PIN_ADC_8 D3
+#define PIN_ADC_9 D6
+
+// // Builtin LED
 #define PIN_LED PB3
 
 // ENCODERS

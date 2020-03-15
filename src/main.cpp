@@ -117,7 +117,6 @@ int main(void)
       if((CAN_send_packet(&CAN_TX_COD_POS)) != CAN_ERROR_STATUS::CAN_PKT_OK){
         serial.print("ERR: SENDING ENCODER\r\n");
       }
-
 #if 0
       CAN_TX_DEBUG_DATA.data.d32[0] = mcs.get_pid_data(MotionController::PID_ID::PID_TRANSLATION, MotionController::INTEGRAL_LSB);
       CAN_TX_DEBUG_DATA.data.d32[1] = mcs.get_pid_data(MotionController::PID_ID::PID_TRANSLATION, MotionController::INTEGRAL_MSB);;
@@ -125,7 +124,6 @@ int main(void)
         serial.print("ERR: SENDING DEBUG DATA\r\n");
       }
 #endif
-
     }
 
     // Periodic Heartbeat message to High Level board, and led toggle

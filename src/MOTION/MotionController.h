@@ -14,12 +14,14 @@
 
 class MotionController {
 
-  typedef struct {
+  typedef struct wheel_block_status_t {
+    static constexpr uint8_t INIT_COUNT = 20;
+    static constexpr float LIMIT = 0.3;
     volatile uint8_t count_blocks;
     volatile bool blocked;
   } wheel_block_status;
 
-  typedef struct {
+  typedef struct encoder_status_t{
     volatile int32_t current;
     volatile int32_t last;
     volatile int32_t speed_current;
@@ -27,21 +29,23 @@ class MotionController {
     volatile int32_t speed_setpoint;
     volatile int32_t speed_setpoint_wanted;
     volatile int32_t speed_setpoint_last;
+    volatile int16_t pwm;
   } encoder_status;
 
 
-  struct {
+  struct robot_status_t{
     volatile int32_t translation_total;
     volatile int32_t translation_speed;
     volatile int32_t translation_setpoint;
-    int32_t         translation_tolerance;
+    int32_t          translation_tolerance;
     volatile int32_t rotation_total;
     volatile int32_t rotation_speed;
     volatile int32_t rotation_setpoint;
-    int32_t         rotation_tolerance;
+    int32_t          rotation_tolerance;
 
     int32_t derivative_tolerance;
     int32_t differential_tolerance;
+    int32_t pwm_tolerance;
 
     int32_t accel_max;
     int32_t speed_max_translation;
@@ -56,6 +60,10 @@ class MotionController {
     bool controlled_speed;
     bool controlled_rotation;
     bool controlled_position;
+
+    static const uint8_t INIT_COUNT = 5;
+    volatile bool movement_done;
+    volatile uint8_t movement_done_count;
   } robot_status;
 
   PID_FP pid_speed_left;
@@ -81,6 +89,8 @@ class MotionController {
    * Detects if a wheel seems to be blocked (actual speed relatively far from the setpoint).
    */
   bool is_wheel_blocked(wheel_block_status& wheel_status, const encoder_status& cod_status, PID_FP& pid_status);
+
+  void reset_detections();
 
   /**
    * Checks if the robot is blocked
