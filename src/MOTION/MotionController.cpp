@@ -1,9 +1,12 @@
 #include "MOTION/MotionController.h"
 #include "config.h"
 #include "UTILITY/timing.h"
-MotionController::MotionController() : motor_left(Motor::Side::LEFT), motor_right(Motor::Side::RIGHT){
 
-}
+MotionController::MotionController() :
+  robot_status(MOTION_CONTROL_FREQ),
+  motor_left(Motor::Side::LEFT), motor_right(Motor::Side::RIGHT),
+  cod_left(MOTION_CONTROL_FREQ), cod_right(MOTION_CONTROL_FREQ)
+{}
 
 #define PI ((float)3.14159265359)
 #define WHEEL_DIAMETER ((float)73.6)
@@ -18,7 +21,6 @@ MotionController::MotionController() : motor_left(Motor::Side::LEFT), motor_righ
 #define MAX_ACCEL_TICK (MAX_ACCEL_MM*MM_TO_TICK)
 
 void MotionController::init() {
-  robot_status = {};
   pid_speed_left.reset();
   pid_speed_right.reset();
   pid_translation.reset();
@@ -48,9 +50,6 @@ void MotionController::init() {
   robot_status.controlled_rotation = false;
   robot_status.controlled_speed = false;
 
-  cod_left = {};
-  cod_right = {};
-  cod_right_raw_last = 0;
   robot_status.accel_max = MAX_ACCEL_TICK;
   robot_status.speed_max_translation = MAX_SPEED_TRANSLATION_TICK;
   robot_status.speed_max_rotation = MAX_SPEED_ROTATION_TICK;
@@ -61,78 +60,52 @@ void MotionController::init() {
   robot_status.translation_tolerance = 15;
   robot_status.pwm_tolerance = 0.9*CONST_PWM_MAX;
 
-  left_block_status.blocked = false;
-  right_block_status.blocked = false;
+  block_status_left.reset();
+  block_status_right.reset();
 
   MX_TIM14_Init();
 }
 
 
 void MotionController::update_position() {
-  static int32_t translation_last=0, rotation_last=0;
-  static int16_t cod_right_overflows=0;
-  int32_t cod_right_raw = COD_get_right();           // Right wheel is positive (trigo rotations)
-  cod_left.current = -COD_get_left();                // Left wheel is the opposite
+  // Update encoder positions and speeds
+  cod_right.update(COD_get_right()); // Right wheel is positive (trigo rotations)
+  cod_left.update(-COD_get_left());  // Left wheel is the opposite
 
-  if(cod_right_raw - cod_right_raw_last > 32767){
-	  cod_right_overflows--;
-  }
-  else if(cod_right_raw_last - cod_right_raw > 32767){
-	  cod_right_overflows++;
-  }
-  cod_right_raw_last = cod_right_raw;
-  cod_right.current  = (cod_right_overflows*65536 + cod_right_raw);
-
-  cod_left.speed_current = (cod_left.current - cod_left.last)*MOTION_CONTROL_FREQ;
-  cod_right.speed_current = (cod_right.current - cod_right.last)*MOTION_CONTROL_FREQ;
-
-  cod_left.last  = cod_left.current;
-  cod_right.last = cod_right.current;
-
-  cod_left_speed_avg.add(cod_left.speed_current);
-  cod_right_speed_avg.add(cod_right.speed_current);
-
-  cod_left.speed_average = cod_left_speed_avg.value();
-  cod_right.speed_average = cod_right_speed_avg.value();
-
-  robot_status.translation_total = (cod_left.current + cod_right.current) >> 1;
-  robot_status.rotation_total = ((cod_right.current - robot_status.translation_total) - (cod_left.current - robot_status.translation_total)) >> 1;
-
-  robot_status.translation_speed = (robot_status.translation_total-translation_last)*MOTION_CONTROL_FREQ;
-  robot_status.rotation_speed = (robot_status.rotation_total-rotation_last)*MOTION_CONTROL_FREQ;
-
-  translation_last = robot_status.translation_total;
-  rotation_last = robot_status.rotation_total;
+  // Update robot translation and rotation
+  robot_status.update_position(cod_left.ticks_current, cod_right.ticks_current);
 }
 
 
 void MotionController::control_motion() {
-  int16_t speed_sp_translation, speed_sp_rotation;
   if(robot_status.controlled_position || robot_status.controlled_rotation || robot_status.controlled_speed){
 
     if(robot_status.controlled_position || robot_status.controlled_rotation){
-      speed_sp_translation = pid_translation.compute(robot_status.translation_total, robot_status.translation_setpoint);
-      speed_sp_rotation = pid_rotation.compute(robot_status.rotation_total, robot_status.rotation_setpoint);
+      robot_status.translation_speed_setpoint = pid_translation.compute(robot_status.translation_total, robot_status.translation_setpoint);
+      robot_status.rotation_speed_setpoint    = pid_rotation.compute(robot_status.rotation_total, robot_status.rotation_setpoint);
 
+      //CAP ROTATION/TRANSLATION SPEED
+      if(robot_status.translation_speed_setpoint > robot_status.speed_max_translation){
+        robot_status.translation_speed_setpoint = robot_status.speed_max_translation;
+      }
+      else if(robot_status.translation_speed_setpoint< -robot_status.speed_max_translation){
+        robot_status.translation_speed_setpoint = -robot_status.speed_max_translation;
+      }
 
-      //CAP ROT/TRANSLATION SPEED
-      if(speed_sp_translation>robot_status.speed_max_translation){
-        speed_sp_translation = robot_status.speed_max_translation;
+      if(robot_status.rotation_speed_setpoint > robot_status.speed_max_rotation){
+        robot_status.rotation_speed_setpoint = robot_status.speed_max_rotation;
       }
-      else if(speed_sp_translation< -robot_status.speed_max_translation){
-        speed_sp_translation = -robot_status.speed_max_translation;
-      }
-
-      if(speed_sp_rotation>robot_status.speed_max_rotation){
-        speed_sp_rotation = robot_status.speed_max_rotation;
-      }
-      else if(speed_sp_rotation< -robot_status.speed_max_rotation){
-        speed_sp_rotation = -robot_status.speed_max_rotation;
+      else if(robot_status.rotation_speed_setpoint < -robot_status.speed_max_rotation){
+        robot_status.rotation_speed_setpoint = -robot_status.speed_max_rotation;
       }
 
       //Update wheel speed setpoints
-      cod_left.speed_setpoint  = ((int32_t)speed_sp_translation - (int32_t)speed_sp_rotation); // Clockwise rotation is positive
-      cod_right.speed_setpoint = ((int32_t)speed_sp_translation + (int32_t)speed_sp_rotation);
+      // Trigonometric rotation makes the left wheel go backwards
+      cod_left.speed_setpoint  = robot_status.translation_speed_setpoint
+                               - robot_status.rotation_speed_setpoint;
+      // But makes the right wheel go forwards
+      cod_right.speed_setpoint = robot_status.translation_speed_setpoint
+                               + robot_status.rotation_speed_setpoint;
     }
     else{
       //Only use speed, for tuning
@@ -141,46 +114,12 @@ void MotionController::control_motion() {
     }
 
     //Wheel Acceleration limits
-    if (((cod_left.speed_setpoint - cod_left.speed_setpoint_last)  > robot_status.accel_max))
-    {
-      cod_left.speed_setpoint = (cod_left.speed_setpoint_last + robot_status.accel_max);
-    }
-    else if (((cod_left.speed_setpoint_last - cod_left.speed_setpoint)  > robot_status.accel_max))
-    {
-      cod_left.speed_setpoint = (cod_left.speed_setpoint_last - robot_status.accel_max);
-    }
-
-    if (((cod_right.speed_setpoint - cod_right.speed_setpoint_last)  > robot_status.accel_max))
-    {
-      cod_right.speed_setpoint = (cod_right.speed_setpoint_last + robot_status.accel_max);
-    }
-    else if (((cod_right.speed_setpoint_last - cod_right.speed_setpoint)  > robot_status.accel_max))
-    {
-      cod_right.speed_setpoint = (cod_right.speed_setpoint_last - robot_status.accel_max);
-    }
+    cod_left.cap_accel(robot_status.accel_max);
+    cod_right.cap_accel(robot_status.accel_max);
 
     //Wheel speed limits
-    if (cod_left.speed_setpoint > robot_status.speed_max_wheel)
-    {
-      cod_left.speed_setpoint = robot_status.speed_max_wheel;
-    }
-    else if (cod_left.speed_setpoint < -robot_status.speed_max_wheel)
-    {
-      cod_left.speed_setpoint = -robot_status.speed_max_wheel;
-    }
-
-    if (cod_right.speed_setpoint > robot_status.speed_max_wheel)
-    {
-      cod_right.speed_setpoint = robot_status.speed_max_wheel;
-    }
-    else if (cod_right.speed_setpoint < -robot_status.speed_max_wheel)
-    {
-      cod_right.speed_setpoint = -robot_status.speed_max_wheel;
-    }
-
-    // Update last wheel setpoints
-    cod_left.speed_setpoint_last = cod_left.speed_setpoint;
-    cod_right.speed_setpoint_last = cod_right.speed_setpoint;
+    cod_left.cap_speed(robot_status.speed_max_wheel);
+    cod_right.cap_speed(robot_status.speed_max_wheel);
   }
 
   if(robot_status.controlled_speed){
@@ -221,15 +160,15 @@ void MotionController::rotate_ticks(int32_t distance_ticks){
 
 
 int32_t MotionController::get_COD_left(){
-  return cod_left.current;
+  return cod_left.ticks_current;
 }
 
 
 int32_t MotionController::get_COD_right(){
-  return cod_right.current;
+  return cod_right.ticks_current;
 }
 
-
+/*
 bool MotionController::is_wheel_blocked(wheel_block_status& wheel_status, const encoder_status& cod_status, PID_FP& pid_status){
   // Each time the wheel speed starts to be far from its setpoint AND the PWM is high (the wheel PID is saturated) AND the robot is farm from its
   // a count is initialized and goes down to 0 and stays there until the wheel isn't blocked
@@ -255,41 +194,15 @@ bool MotionController::is_wheel_blocked(wheel_block_status& wheel_status, const 
     wheel_status.blocked = false;
   }
   return (wheel_status.blocked && (wheel_status.count_blocks == 0));
-}
-
-void MotionController::reset_detections(){
-  left_block_status.blocked = false;
-  right_block_status.blocked = false;
-  robot_status.movement_done = false;
-}
+}*/
 
 // Detects if the robot is physically stopped (blocked)
 bool MotionController::is_robot_blocked(){
-  bool left_wheel_blocked  = is_wheel_blocked(left_block_status, cod_left, pid_speed_left);
-  bool right_wheel_blocked = is_wheel_blocked(right_block_status, cod_right, pid_speed_right);
+
+  bool left_wheel_blocked  = block_status_left.is_blocked();
+  bool right_wheel_blocked = block_status_right.is_blocked();
 
   return left_wheel_blocked || right_wheel_blocked;
-}
-
-// Detects if the robot completed its previous movement order
-bool MotionController::has_movement_ended(){
-  int32_t err_trans = ABS(pid_translation.get_error());
-  int32_t err_rot   = ABS(pid_rotation.get_error());
-
-  if(err_trans <= robot_status.translation_tolerance && err_rot <= robot_status.rotation_tolerance){
-    //Approximately at destination
-    if(!robot_status.movement_done){
-      robot_status.movement_done = true;
-      robot_status.movement_done_count = robot_status.INIT_COUNT;
-    }
-    if(robot_status.movement_done_count > 0){
-      robot_status.movement_done_count--;
-    }
-  }
-  else{
-    robot_status.movement_done = false;
-  }
-  return robot_status.movement_done && (robot_status.movement_done_count == 0);
 }
 
 
@@ -297,16 +210,24 @@ void MotionController::detect_stop(){
   bool status_block; // is the robot physically blocked and should stop?
   bool status_end;   // is the robot at the end of a movement, as expected?
   volatile uint32_t t = micros();
+
+  block_status_left.update();
+  block_status_right.update();
+  robot_status.update_movement_done(pid_translation.get_error(), pid_rotation.get_error());
+
   status_block = is_robot_blocked();
-  status_end = has_movement_ended();
+  status_end = robot_status.is_movement_done();
+
   t = micros()-t;
 
   // if done or blocked, stop the robot
   if(robot_status.moving && !robot_status.forced_movement && (status_block || status_end)){
     stop(status_block && !status_end); //Only count as blocked if the movement is not at its end
-    reset_detections();
   }
 
+  //TODO: wheel block checker (blocking means pwm high)
+  //TODO: if blocked or stop order : go into stopping state, and block wheels until speed is zero long enough.
+  //TODO: graph of PWM and errors to check for block tolerances
   /*
   static const uint8_t INIT_BLOCK = 20;
   static const uint8_t INIT_STOP  = 5;
@@ -366,9 +287,6 @@ void MotionController::stop(bool wheels_blocked){
   // // stop wheels, for tuning of speed PIDs
   cod_left.speed_setpoint_wanted = 0;
   cod_right.speed_setpoint_wanted = 0;
-
-  cod_left_speed_avg.reset();
-  cod_right_speed_avg.reset();
 
   robot_status.movement_stopped = true;   // Signal a stop event
   robot_status.moving = false;            // Stop current movement

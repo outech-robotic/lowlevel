@@ -8,63 +8,15 @@
 #ifndef MOTION_MOTIONCONTROLLER_H_
 #define MOTION_MOTIONCONTROLLER_H_
 #include <MOTION/PIDFP.h>
+#include <MOTION/WheelStatusChecker.hpp>
 #include "MOTION/Motor.h"
+#include "MOTION/WheelStatus.hpp"
 #include "TIMER/tim.h"
 #include "UTILITY/Average.hpp"
 
 class MotionController {
 
-  typedef struct wheel_block_status_t {
-    static constexpr uint8_t INIT_COUNT = 20;
-    static constexpr float LIMIT = 0.3;
-    volatile uint8_t count_blocks;
-    volatile bool blocked;
-  } wheel_block_status;
-
-  typedef struct encoder_status_t{
-    volatile int32_t current;
-    volatile int32_t last;
-    volatile int32_t speed_current;
-    volatile int32_t speed_average;
-    volatile int32_t speed_setpoint;
-    volatile int32_t speed_setpoint_wanted;
-    volatile int32_t speed_setpoint_last;
-    volatile int16_t pwm;
-  } encoder_status;
-
-
-  struct robot_status_t{
-    volatile int32_t translation_total;
-    volatile int32_t translation_speed;
-    volatile int32_t translation_setpoint;
-    int32_t          translation_tolerance;
-    volatile int32_t rotation_total;
-    volatile int32_t rotation_speed;
-    volatile int32_t rotation_setpoint;
-    int32_t          rotation_tolerance;
-
-    int32_t derivative_tolerance;
-    int32_t differential_tolerance;
-    int32_t pwm_tolerance;
-
-    int32_t accel_max;
-    int32_t speed_max_translation;
-    int32_t speed_max_rotation;
-    int32_t speed_max_wheel;
-
-    volatile bool blocked;
-    volatile bool moving;
-    volatile bool forced_movement;
-    volatile bool movement_stopped;
-
-    bool controlled_speed;
-    bool controlled_rotation;
-    bool controlled_position;
-
-    static const uint8_t INIT_COUNT = 5;
-    volatile bool movement_done;
-    volatile uint8_t movement_done_count;
-  } robot_status;
+  RobotStatus robot_status;
 
   PID_FP pid_speed_left;
   PID_FP pid_speed_right;
@@ -74,23 +26,15 @@ class MotionController {
   Motor motor_left;
   Motor motor_right;
 
-  wheel_block_status left_block_status;
-  wheel_block_status right_block_status;
+  WheelBlockChecker block_status_left;
+  WheelBlockChecker block_status_right;
 
-  encoder_status   cod_left;
-  encoder_status   cod_right;
+  WheelStatus<true> cod_left; // Left encoder is on a 32 bits counter
+  WheelStatus<false> cod_right;
+
   volatile int32_t cod_right_last;
   volatile int32_t cod_right_raw_last;
 
-  Average<volatile int32_t, 8> cod_left_speed_avg;
-  Average<volatile int32_t, 8> cod_right_speed_avg;
-
-  /**
-   * Detects if a wheel seems to be blocked (actual speed relatively far from the setpoint).
-   */
-  bool is_wheel_blocked(wheel_block_status& wheel_status, const encoder_status& cod_status, PID_FP& pid_status);
-
-  void reset_detections();
 
   /**
    * Checks if the robot is blocked
